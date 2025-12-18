@@ -627,25 +627,29 @@ pub const World = struct {
         }
         if (world.cmd_chars.items.len > 0) {
             try world.font_material.?.recordCommandsNoTransform(cmdbuf);
-        }
-        var x: f32 = 0;
-        for (world.cmd_chars.items) |ch| {
-            const ch_transform = Mat4{
-                .data = .{
-                    .{ 1, 0, 0, 0 },
-                    .{ 0, world.cam.aspect, 0, 0 },
-                    .{ 0, 0, 1, 0 },
-                    .{ x, 0, 0, 1 },
-                },
-            };
-            try world.font_material.?.pushTransform(cmdbuf, ch_transform);
+            
+            const total_width = @as(f32, @floatFromInt(world.cmd_chars.items.len)) * font_size_x;
+            var x: f32 = -total_width / 2.0;
+            const y: f32 = 0.8; // Bottom of the screen (Vulkan Y-down)
 
-            const geom = world.char_geometry.get(ch) orelse world.char_geometry.get('?').?;
-            gc.dev.cmdBindVertexBuffers(cmdbuf, 0, 1, @ptrCast(&geom.vert_buf.?.buf), &.{0});
-            gc.dev.cmdBindIndexBuffer(cmdbuf, geom.index_buf.?.buf, 0, .uint32);
-            gc.dev.cmdDrawIndexed(cmdbuf, @intCast(geom.indices.len), 1, 0, 0, 0);
+            for (world.cmd_chars.items) |ch| {
+                const ch_transform = Mat4{
+                    .data = .{
+                        .{ 1, 0, 0, 0 },
+                        .{ 0, world.cam.aspect, 0, 0 },
+                        .{ 0, 0, 1, 0 },
+                        .{ x, y, 0, 1 },
+                    },
+                };
+                try world.font_material.?.pushTransform(cmdbuf, ch_transform);
 
-            x += font_size_x;
+                const geom = world.char_geometry.get(ch) orelse world.char_geometry.get('?').?;
+                gc.dev.cmdBindVertexBuffers(cmdbuf, 0, 1, @ptrCast(&geom.vert_buf.?.buf), &.{0});
+                gc.dev.cmdBindIndexBuffer(cmdbuf, geom.index_buf.?.buf, 0, .uint32);
+                gc.dev.cmdDrawIndexed(cmdbuf, @intCast(geom.indices.len), 1, 0, 0, 0);
+
+                x += font_size_x;
+            }
         }
     }
 
