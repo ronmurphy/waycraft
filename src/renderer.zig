@@ -82,8 +82,14 @@ pub const Renderer = struct {
     wire_box_material: LineMaterial,
     focus_indicator_material: LineMaterial,
 
-    bufs_to_destroy: std.ArrayList(vku.Buf),
-    images_to_destroy: std.ArrayList(vku.Image),
+    bufs_to_destroy: [max_frames_in_flight]std.ArrayList(vku.Buf),
+    images_to_destroy: [max_frames_in_flight]std.ArrayList(vku.Image),
+    pipelines_to_destroy: [max_frames_in_flight]std.ArrayList(vk.Pipeline),
+    pipeline_layouts_to_destroy: [max_frames_in_flight]std.ArrayList(vk.PipelineLayout),
+    descriptor_pools_to_destroy: [max_frames_in_flight]std.ArrayList(vk.DescriptorPool),
+    
+    screenshot_requested: bool = false,
+    screenshot_buf: ?vku.Buf = null,
 
     pub fn init(r: *Renderer, world: *World, display: *wl.Display, surface: *wl.Surface, desktop_mode: bool) !void {
         const gc = try GraphicsContext.init(alloc, "waycraft", @ptrCast(display), @ptrCast(surface));
@@ -118,9 +124,20 @@ pub const Renderer = struct {
             .wire_box_material = undefined,
             .focus_indicator_material = undefined,
 
-            .bufs_to_destroy = try .initCapacity(alloc, 4),
-            .images_to_destroy = try .initCapacity(alloc, 4),
+            .bufs_to_destroy = undefined,
+            .images_to_destroy = undefined,
+            .pipelines_to_destroy = undefined,
+            .pipeline_layouts_to_destroy = undefined,
+            .descriptor_pools_to_destroy = undefined,
         };
+
+        for (0..max_frames_in_flight) |i| {
+            r.bufs_to_destroy[i] = try .initCapacity(alloc, 4);
+            r.images_to_destroy[i] = try .initCapacity(alloc, 4);
+            r.pipelines_to_destroy[i] = try .initCapacity(alloc, 4);
+            r.pipeline_layouts_to_destroy[i] = try .initCapacity(alloc, 4);
+            r.descriptor_pools_to_destroy[i] = try .initCapacity(alloc, 4);
+        }
 
         try r.initFormats();
         try r.createRenderPass();
@@ -181,27 +198,30 @@ pub const Renderer = struct {
         gc.dev.deviceWaitIdle() catch {};
 
         defer gc.deinit();
-        defer gc.dev.destroyCommandPool(this.cmdpool, null);
-        defer {
-            this.deinitSwapchain();
-            alloc.free(this.swapchain_images);
-        }
-        defer gc.dev.destroyRenderPass(this.render_pass, null);
-        defer this.deinitFramebufs();
-
-        defer {
-            for (this.bufs_to_destroy.items) |buf| buf.destroy(gc);
-            this.bufs_to_destroy.deinit(alloc);
-        }
-        defer {
-            for (this.images_to_destroy.items) |image| image.destroy(gc);
-            this.images_to_destroy.deinit(alloc);
+        
+        for (0..max_frames_in_flight) |i| {
+            for (this.bufs_to_destroy[i].items) |buf| buf.destroy(gc);
+            this.bufs_to_destroy[i].deinit(alloc);
+            for (this.images_to_destroy[i].items) |image| image.destroy(gc);
+            this.images_to_destroy[i].deinit(alloc);
+            for (this.pipelines_to_destroy[i].items) |res| gc.dev.destroyPipeline(res, null);
+            this.pipelines_to_destroy[i].deinit(alloc);
+            for (this.pipeline_layouts_to_destroy[i].items) |res| gc.dev.destroyPipelineLayout(res, null);
+            this.pipeline_layouts_to_destroy[i].deinit(alloc);
+            for (this.descriptor_pools_to_destroy[i].items) |res| gc.dev.destroyDescriptorPool(res, null);
+            this.descriptor_pools_to_destroy[i].deinit(alloc);
         }
 
-        defer {
-            const toplevel_iter = this.toplevels.safeIterator(.forward);
-            while (toplevel_iter.next()) |toplevel| toplevel.deinit(gc);
+        if (this.screenshot_buf) |*buf| {
+            buf.destroy(gc);
         }
+
+        this.deinitSwapchain();
+        this.center_cross_geometry.deinit();
+        this.center_cross_material.destroy();
+        this.wire_box_geometry.deinit();
+        this.wire_box_material.destroy();
+        this.focus_indicator_material.destroy();
     }
 
     fn initFormats(r: *Renderer) !void {
@@ -241,7 +261,7 @@ pub const Renderer = struct {
             .image_color_space = r.surface_format.color_space,
             .image_extent = r.extent,
             .image_array_layers = 1,
-            .image_usage = .{ .color_attachment_bit = true, .transfer_dst_bit = true },
+            .image_usage = .{ .color_attachment_bit = true, .transfer_src_bit = true, .transfer_dst_bit = true },
             .image_sharing_mode = .exclusive,
             .pre_transform = caps.current_transform,
             .composite_alpha = .{ .opaque_bit_khr = true },
@@ -325,17 +345,43 @@ pub const Renderer = struct {
     }
 
     pub fn destroyBufAfterFrame(r: *Renderer, buf: vku.Buf) void {
-        r.bufs_to_destroy.append(alloc, buf) catch {
+        r.bufs_to_destroy[r.frame_index].append(alloc, buf) catch {
             std.log.err("OOM", .{});
             return;
         };
     }
 
     pub fn destroyImageAfterFrame(r: *Renderer, image: vku.Image) void {
-        r.images_to_destroy.append(alloc, image) catch {
+        r.images_to_destroy[r.frame_index].append(alloc, image) catch {
             std.log.err("OOM", .{});
             return;
         };
+    }
+
+    pub fn destroyPipelineAfterFrame(r: *Renderer, pipeline: vk.Pipeline) void {
+        r.pipelines_to_destroy[r.frame_index].append(alloc, pipeline) catch {
+            std.log.err("OOM", .{});
+            return;
+        };
+    }
+
+    pub fn destroyPipelineLayoutAfterFrame(r: *Renderer, layout: vk.PipelineLayout) void {
+        r.pipeline_layouts_to_destroy[r.frame_index].append(alloc, layout) catch {
+            std.log.err("OOM", .{});
+            return;
+        };
+    }
+
+    pub fn destroyDescriptorPoolAfterFrame(r: *Renderer, pool: vk.DescriptorPool) void {
+        r.descriptor_pools_to_destroy[r.frame_index].append(alloc, pool) catch {
+            std.log.err("OOM", .{});
+            return;
+        };
+    }
+
+    pub fn takeScreenshot(r: *Renderer) void {
+        if (r.screenshot_requested) return;
+        r.screenshot_requested = true;
     }
 
     fn recreateSwapchain(r: *Renderer) !void {
@@ -418,11 +464,76 @@ pub const Renderer = struct {
 
         this.frame_index = (this.frame_index + 1) % max_frames_in_flight;
 
-        // Cleanup
-        for (this.bufs_to_destroy.items) |buf| buf.destroy(gc);
-        this.bufs_to_destroy.clearRetainingCapacity();
-        for (this.images_to_destroy.items) |image| image.destroy(gc);
-        this.images_to_destroy.clearRetainingCapacity();
+        // Cleanup resources for this frame index, safely after the fence wait
+        const bufs = &this.bufs_to_destroy[this.frame_index];
+        for (bufs.items) |buf| buf.destroy(gc);
+        bufs.clearRetainingCapacity();
+
+        const images = &this.images_to_destroy[this.frame_index];
+        for (images.items) |image| image.destroy(gc);
+        images.clearRetainingCapacity();
+
+        const pipelines = &this.pipelines_to_destroy[this.frame_index];
+        for (pipelines.items) |p| gc.dev.destroyPipeline(p, null);
+        pipelines.clearRetainingCapacity();
+
+        const layouts = &this.pipeline_layouts_to_destroy[this.frame_index];
+        for (layouts.items) |l| gc.dev.destroyPipelineLayout(l, null);
+        layouts.clearRetainingCapacity();
+
+        const pools = &this.descriptor_pools_to_destroy[this.frame_index];
+        for (pools.items) |p| gc.dev.destroyDescriptorPool(p, null);
+        pools.clearRetainingCapacity();
+
+        if (this.screenshot_requested and this.screenshot_buf != null) {
+            this.screenshot_requested = false;
+            this.gc.dev.deviceWaitIdle() catch {};
+            this.saveScreenshot() catch |err| {
+                std.log.err("Failed to save screenshot: {s}", .{@errorName(err)});
+            };
+        }
+    }
+
+    fn saveScreenshot(this: *Renderer) !void {
+        const gc = &this.gc;
+        const buf = this.screenshot_buf.?;
+        const width = this.extent.width;
+        const height = this.extent.height;
+
+        const data = try gc.dev.mapMemory(buf.mem, 0, vk.WHOLE_SIZE, .{});
+        defer gc.dev.unmapMemory(buf.mem);
+
+        const pixels: [*]u8 = @ptrCast(data);
+        
+        // Convert BGRA to RGBA if necessary, or just use zigimg
+        // Swapchain format is likely B8G8R8A8_SRGB per findSurfaceFormat
+        var image = try img.Image.create(alloc, width, height, .rgba32);
+        defer image.deinit(alloc);
+
+        for (0..height) |y| {
+            for (0..width) |x| {
+                const i = (y * width + x) * 4;
+                const b = pixels[i + 0];
+                const g = pixels[i + 1];
+                const r = pixels[i + 2];
+                const a = pixels[i + 3];
+                image.pixels.rgba32[y * width + x] = .{ .r = r, .g = g, .b = b, .a = a };
+            }
+        }
+
+        const home = std.process.getEnvVarOwned(alloc, "HOME") catch "/home/brad";
+        defer if (!std.mem.eql(u8, home, "/home/brad")) alloc.free(home);
+        
+        const timestamp = std.time.timestamp();
+        const filename = try std.fmt.allocPrint(alloc, "{s}/Pictures/waycraft_{d}.png", .{ home, timestamp });
+        defer alloc.free(filename);
+
+        std.fs.makeDirAbsolute(try std.fmt.allocPrint(alloc, "{s}/Pictures", .{home})) catch |err| {
+            if (err != error.PathAlreadyExists) return err;
+        };
+
+        try image.writeToFilePath(alloc, filename, &.{}, .{ .png = .{} });
+        std.log.info("Saved screenshot to {s}", .{filename});
     }
 
     fn createRenderPass(r: *Renderer) !void {
@@ -527,6 +638,7 @@ pub const Renderer = struct {
 
         try world.render(r, cmdbuf);
 
+
         if (world.raycast_result) |raycast_result| {
             const block = world.at(raycast_result.block_pos);
 
@@ -587,6 +699,74 @@ pub const Renderer = struct {
         gc.dev.cmdDrawIndexed(cmdbuf, @intCast(r.center_cross_geometry.indices.len), 1, 0, 0, 0);
 
         gc.dev.cmdEndRenderPass(cmdbuf);
+
+        if (r.screenshot_requested) {
+            // Ensure staging buffer exists and is correct size
+            const size = r.extent.width * r.extent.height * 4;
+            if (r.screenshot_buf) |buf| {
+                if (buf.size < size) {
+                    buf.destroy(gc);
+                    r.screenshot_buf = try vku.Buf.create(gc, size, .{ .transfer_dst_bit = true }, .{ .host_visible_bit = true, .host_coherent_bit = true });
+                }
+            } else {
+                r.screenshot_buf = try vku.Buf.create(gc, size, .{ .transfer_dst_bit = true }, .{ .host_visible_bit = true, .host_coherent_bit = true });
+            }
+
+            // Copy from swapchain image to staging buffer
+            // We are passed framebuf which corresponds to the current swapchain image.
+            // But we need the vk.Image handle.
+            // Let's find which swapchain image this framebuf belongs to.
+            var image: ?vk.Image = null;
+            for (r.swapchain_images) |si| {
+                if (si.framebuf == framebuf) {
+                    image = si.image;
+                    break;
+                }
+            }
+
+            if (image) |img_handle| {
+                // Transition from present_src_khr to transfer_src_optimal
+                var barrier = vk.ImageMemoryBarrier{
+                    .old_layout = .present_src_khr,
+                    .new_layout = .transfer_src_optimal,
+                    .src_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
+                    .dst_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
+                    .image = img_handle,
+                    .subresource_range = .{
+                        .aspect_mask = .{ .color_bit = true },
+                        .base_mip_level = 0,
+                        .level_count = 1,
+                        .base_array_layer = 0,
+                        .layer_count = 1,
+                    },
+                    .src_access_mask = .{ .color_attachment_write_bit = true },
+                    .dst_access_mask = .{ .transfer_read_bit = true },
+                };
+                gc.dev.cmdPipelineBarrier(cmdbuf, .{ .color_attachment_output_bit = true }, .{ .transfer_bit = true }, .{}, 0, null, 0, null, 1, @ptrCast(&barrier));
+                
+                const region = vk.BufferImageCopy{
+                    .buffer_offset = 0,
+                    .buffer_row_length = r.extent.width,
+                    .buffer_image_height = r.extent.height,
+                    .image_subresource = .{
+                        .aspect_mask = .{ .color_bit = true },
+                        .mip_level = 0,
+                        .base_array_layer = 0,
+                        .layer_count = 1,
+                    },
+                    .image_offset = .{ .x = 0, .y = 0, .z = 0 },
+                    .image_extent = .{ .width = r.extent.width, .height = r.extent.height, .depth = 1 },
+                };
+                gc.dev.cmdCopyImageToBuffer(cmdbuf, img_handle, .transfer_src_optimal, r.screenshot_buf.?.buf, 1, @ptrCast(&region));
+                
+                // Transition back to present_src_khr
+                barrier.old_layout = .transfer_src_optimal;
+                barrier.new_layout = .present_src_khr;
+                barrier.src_access_mask = .{ .transfer_read_bit = true };
+                barrier.dst_access_mask = . {};
+                gc.dev.cmdPipelineBarrier(cmdbuf, .{ .transfer_bit = true }, .{ .bottom_of_pipe_bit = true }, .{}, 0, null, 0, null, 1, @ptrCast(&barrier));
+            }
+        }
 
         try gc.dev.endCommandBuffer(cmdbuf);
     }

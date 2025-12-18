@@ -129,14 +129,12 @@ pub const SimpleMaterial = struct {
     }
 
     pub fn destroy(m: *const SimpleMaterial) void {
-        const gc = &m.renderer.gc;
-
-        defer gc.dev.destroyDescriptorPool(m.descriptor_pool, null);
-        defer m.renderer.destroyBufAfterFrame(m.uniforms_buf);
-        defer if (m.image) |image| m.renderer.destroyImageAfterFrame(image);
-        defer gc.dev.destroyPipelineLayout(m.pipeline_layout, null);
-        defer gc.dev.destroyPipeline(m.pipeline, null);
-        defer alloc.free(m.dirt);
+        m.renderer.destroyDescriptorPoolAfterFrame(m.descriptor_pool);
+        m.renderer.destroyBufAfterFrame(m.uniforms_buf);
+        if (m.image) |image| m.renderer.destroyImageAfterFrame(image);
+        m.renderer.destroyPipelineLayoutAfterFrame(m.pipeline_layout);
+        m.renderer.destroyPipelineAfterFrame(m.pipeline);
+        alloc.free(m.dirt);
     }
 
     pub fn setImage(m: *SimpleMaterial, image: ?vku.Image) void {

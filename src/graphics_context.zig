@@ -267,6 +267,9 @@ fn initializeCandidate(instance: Instance, candidate: DeviceCandidate) !vk.Devic
     else
         2;
 
+    // We must query the features before creating the device to satisfy validation layers
+    _ = instance.getPhysicalDeviceFeatures(candidate.pdev);
+
     return try instance.createDevice(candidate.pdev, &.{
         .queue_create_info_count = queue_count,
         .p_queue_create_infos = &qci,

@@ -125,7 +125,7 @@ fn handleRequestPool(resource: *wls.ShmPool, request: wls.ShmPool.Request, pool:
                     return;
                 },
             };
-            const buffer = Buffer.create(resource.getClient(), resource.getVersion(), req.id, req.offset, req.width, req.height, req.stride, buffer_format, pool.data) catch |err| {
+            const buffer = Buffer.create(resource.getClient(), resource.getVersion(), req.id, req.offset, req.width, req.height, req.stride, buffer_format, pool) catch |err| {
                 std.log.err("Error creating buffer: {s}", .{@errorName(err)});
                 return;
             };

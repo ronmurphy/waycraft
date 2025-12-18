@@ -56,14 +56,12 @@ pub const Geometry = struct {
 
     /// This doesn't free verts and indices, you need to do that yourself
     pub fn deinit(g: *Geometry) void {
-        const gc = &g.renderer.gc;
-
         if (g.vert_buf) |buf| {
-            buf.destroy(gc);
+            g.renderer.destroyBufAfterFrame(buf);
             g.vert_buf = null;
         }
         if (g.index_buf) |buf| {
-            buf.destroy(gc);
+            g.renderer.destroyBufAfterFrame(buf);
             g.index_buf = null;
         }
     }
@@ -76,14 +74,14 @@ pub const Geometry = struct {
 
         if (g.vert_buf) |old_vert_buf| {
             if (old_vert_buf.size != vert_buf_size) {
-                old_vert_buf.destroy(gc);
+                g.renderer.destroyBufAfterFrame(old_vert_buf);
                 g.vert_buf = null;
             }
         }
 
         if (g.index_buf) |old_index_buf| {
             if (old_index_buf.size != index_buf_size) {
-                old_index_buf.destroy(gc);
+                g.renderer.destroyBufAfterFrame(old_index_buf);
                 g.index_buf = null;
             }
         }

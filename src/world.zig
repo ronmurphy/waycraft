@@ -154,11 +154,14 @@ pub const World = struct {
     active_toplevel: ?*const Toplevel,
     active_toplevel_changed_event: wls.Signal(void),
     active_toplevel_destroyed_listener: wls.Listener(void),
-
-    is_entering_cmd: bool,
+    
+    is_entering_cmd: bool = false,
     cmd_chars: std.ArrayList(u8),
     child_processes: std.ArrayList(std.process.Child),
     next_window_spec: ?WindowSpec,
+    
+    exit_requested: bool = false,
+    screenshot_requested: bool = false,
 
     blocks_material: ?SimpleMaterial,
     char_geometry: std.AutoHashMap(u8, Geometry),
@@ -177,8 +180,8 @@ pub const World = struct {
             .toplevel_renderables = try .initCapacity(alloc, 4),
 
             .is_entering_cmd = false,
-            .cmd_chars = try .initCapacity(alloc, 16),
-            .child_processes = try .initCapacity(alloc, 4),
+            .cmd_chars = try std.ArrayList(u8).initCapacity(alloc, 16),
+            .child_processes = try std.ArrayList(std.process.Child).initCapacity(alloc, 4),
             .next_window_spec = null,
 
             .active_toplevel = null,
@@ -324,12 +327,18 @@ pub const World = struct {
             const client = active_toplevel.resource.getClient();
             if (wc_seat.getPointerForClient(client)) |pointer| {
                 if (world.raycast_result) |raycast_result| {
+                    const tr = blk: {
+                        for (world.toplevel_renderables.items) |r| {
+                            if (r.toplevel == active_toplevel) break :blk r;
+                        }
+                        return;
+                    };
                     const cam_pos = world.cam.transform.extractTranslation();
                     const cam_forward = Vec3.fromSlice(&world.cam.transform.data[2]);
                     const hit_pos = cam_pos.add(cam_forward.mul(.set(raycast_result.dist)));
                     const rel_hit_pos = hit_pos.sub(raycast_result.block_pos.cast(f32));
-                    const surface_x = rel_hit_pos.x() * @as(f32, @floatFromInt(active_toplevel.width));
-                    const surface_y = (1 - rel_hit_pos.y()) * @as(f32, @floatFromInt(active_toplevel.height));
+                    const surface_x = rel_hit_pos.x() * @as(f32, @floatFromInt(tr.width));
+                    const surface_y = (1 - rel_hit_pos.y()) * @as(f32, @floatFromInt(tr.height));
                     const t = std.posix.clock_gettime(std.posix.CLOCK.BOOTTIME) catch {
                         std.log.err("Error getting timestamp???", .{});
                         return;
@@ -453,6 +462,18 @@ pub const World = struct {
             } else if (key == xkb.Keysym.Return) {
                 const input = world.cmd_chars.items[1..];
 
+                if (std.mem.eql(u8, input, "exit")) {
+                    world.exit_requested = true;
+                    return;
+                }
+                
+                if (std.mem.eql(u8, input, "screencap")) {
+                    world.screenshot_requested = true;
+                    world.is_entering_cmd = false;
+                    world.cmd_chars.clearRetainingCapacity();
+                    return;
+                }
+
                 // Parse command and extract window spec
                 var cmd_buf: [256]u8 = undefined;
                 const parsed = parseCommand(input, &cmd_buf);
@@ -482,6 +503,7 @@ pub const World = struct {
             }
             return;
         }
+
 
         world.cam_controller.keyPressed(key);
     }
@@ -563,7 +585,7 @@ pub const World = struct {
         // Tell all of the toplevels that they can render a new frame
         for (world.toplevel_renderables.items) |tr| {
             if (tr.is_destroyed == false) {
-                var frame_callbacks_iter = tr.toplevel.xdg_surface.surface.state.frame_callbacks.safeIterator(.forward);
+                var frame_callbacks_iter = tr.surface.state.frame_callbacks.safeIterator(.forward);
                 while (frame_callbacks_iter.next()) |frame_callback| {
                     const t = std.posix.clock_gettime(std.posix.CLOCK.BOOTTIME) catch {
                         std.log.err("Error getting timestamp???", .{});
@@ -584,9 +606,15 @@ pub const World = struct {
                 try tr.render(gc, cmdbuf, world);
             } else {
                 try world.setAt(tr.transform.extractTranslation().cast(i32), .air);
+                tr.deinit();
             }
         }
         world.toplevel_renderables.items.len = i;
+
+        if (world.screenshot_requested) {
+            renderer.takeScreenshot();
+            world.screenshot_requested = false;
+        }
 
         // Render the text
         if (world.char_geometry.unmanaged.size == 0) {

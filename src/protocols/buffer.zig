@@ -16,13 +16,13 @@ pub const Buffer = struct {
     height: i32,
     stride: i32,
     format: Format,
-    pool_data: []u8,
+    pool: *Pool,
 
     events: struct {
         destroyed: wls.Signal(void),
     },
 
-    pub fn create(client: *wls.Client, version: u32, id: u32, offset: i32, width: i32, height: i32, stride: i32, format: Format, pool_data: []u8) !*Buffer {
+    pub fn create(client: *wls.Client, version: u32, id: u32, offset: i32, width: i32, height: i32, stride: i32, format: Format, pool: *Pool) !*Buffer {
         const resource = try wls.Buffer.create(client, version, id);
 
         const buffer = try alloc.create(Buffer);
@@ -33,7 +33,7 @@ pub const Buffer = struct {
             .height = height,
             .stride = stride,
             .format = format,
-            .pool_data = pool_data,
+            .pool = pool,
 
             .events = .{
                 .destroyed = undefined,

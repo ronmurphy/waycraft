@@ -12,6 +12,7 @@ pub var world: World = undefined;
 const millis_between_updates: u64 = @intFromFloat(std.time.ms_per_s / 30); // About 30 FPS
 var prev_frame_time: std.time.Instant = undefined;
 var update_timer: *wls.EventSource = undefined;
+var global_display: ?*wls.Server = null;
 
 pub fn main() !void {
     // Parse command line arguments
@@ -30,7 +31,11 @@ pub fn main() !void {
     // Init backend (must be done before setting the env variable)
     try backend.init(&world, desktop_mode);
 
-    const display = try wls.Server.create();
+    var display = try wls.Server.create();
+    defer display.destroy();
+
+    global_display = display;
+    defer global_display = null;
 
     // Create globals
     const compositor = try @import("protocols/compositor.zig").createGlobal(display);
@@ -62,7 +67,7 @@ pub fn main() !void {
     };
 
     // Update loop
-    prev_frame_time = try .now();
+    prev_frame_time = try std.time.Instant.now();
     update_timer = try display.getEventLoop().addTimer(?*anyopaque, updateCLike, null);
     try update_timer.timerUpdate(1);
 
@@ -90,6 +95,10 @@ fn update() !void {
 
     try world.update(dt);
     try backend.update();
+
+    if (world.exit_requested) {
+        if (global_display) |d| d.terminate();
+    }
 
     try update_timer.timerUpdate(millis_between_updates);
 }
