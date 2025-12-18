@@ -1,0 +1,42 @@
+.{
+    .name = .waycraft,
+    .version = "0.0.0",
+    .fingerprint = 0xf025e12144b3b0c1, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0-dev.104+558bea2a7",
+    .dependencies = .{
+        .wayland = .{
+            .url = "git+https://codeberg.org/ifreund/zig-wayland#1b5c038ec10da20ed3a15b0b2a6db1c21383e8ea",
+            .hash = "wayland-0.5.0-dev-lQa1khrMAQDJDwYFKpdH3HizherB7sHo5dKMECfvxQHe",
+        },
+        .vulkan_headers = .{
+            .url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/v1.4.325.tar.gz",
+            .hash = "N-V-__8AACJA9gH2PXN1QZ9vF1oi8qUvJMRdX8ZZRTA5lova",
+        },
+        .vulkan = .{
+            .url = "git+https://github.com/Snektron/vulkan-zig#f879074293f0e2f718c93fd19cc0a96260a3aa52",
+            .hash = "vulkan-0.0.0-r7Ytx6hBAwBUnt0XA-uOkR2hda4fAHFhQITNTgJpnFkY",
+        },
+        .zalgebra = .{
+            .url = "git+https://github.com/kooparse/zalgebra/#e84c8a378b516ddaf2dfc221e524e0c1d15f4108",
+            .hash = "zalgebra-0.0.0-aaiVSuZ0AQDD8Z5Q-8a4kLcz_2srt4cQbwT0QRjKjnDi",
+        },
+        .xkbcommon = .{
+            .url = "git+https://codeberg.org/zacoons/zig-xkbcommon#a04179063ebc8f904092a64f9483b6a770efb79d",
+            .hash = "xkbcommon-0.4.0-dev-VDqIe1qZAgAoP0mBn4BgHQxSwPJKDFxa5AbCEy8aiC2U",
+        },
+        .zigimg = .{
+            .url = "git+https://github.com/zigimg/zigimg#f5783e87627cbd9e0b45fad112e9f73503914f36",
+            .hash = "zigimg-0.1.0-8_eo2vBrFQBhsrLpexdcDQY-zrlzkyFZfKuYX-Nry6KN",
+        },
+        .perlin = .{
+            .url = "git+https://github.com/mgord9518/perlin-zig#ccf62ddcbde9fd3b1572c5385e15062c72201f0a",
+            .hash = "perlin-0.1.1-hiqlWGcZAABIllyOKMo6AM9TRX19iq_k6joT3fvRCFja",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "UNLICENSE",
+    },
+}

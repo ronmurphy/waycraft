@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Waycraft
+Comment=3D Wayland Compositor - Minecraft-like Desktop Environment
+Exec=waycraft --desktop
+Type=Application
+DesktopNames=Waycraft
