@@ -58,6 +58,12 @@ pub const WindowSpec = struct {
     // Future: rotation: f32, face: u8, position: Vec3, etc.
 };
 
+pub const Notification = struct {
+    message: []const u8,
+    created_at: i64, // milliseconds since boot
+    duration_ms: i64 = 3000, // default 3 seconds
+};
+
 // Parse command with flags like "gimp 3w 2h" into command and WindowSpec
 fn parseCommand(input: []const u8, cmd_buf: []u8) struct { cmd: []const u8, spec: WindowSpec } {
     var spec = WindowSpec{};
@@ -170,6 +176,8 @@ pub const World = struct {
     is_raycast_dirty: bool = false,
     raycast_result: ?RaycastResult = null,
 
+    notifications: std.ArrayList(Notification),
+
     pub fn init(world: *World) !void {
         world.* = .{
             .cam = .new(),
@@ -191,8 +199,13 @@ pub const World = struct {
             .blocks_material = null,
             .char_geometry = .init(alloc),
             .font_material = null,
+
+            .notifications = try std.ArrayList(Notification).initCapacity(alloc, 4),
         };
         world.active_toplevel_changed_event.init();
+
+        // Add initial notification
+        world.addNotification("Click to start - then type / for commands");
 
         _ = try world.getChunksAroundCamera();
 
@@ -417,8 +430,13 @@ pub const World = struct {
     }
 
     pub fn keyPressed(world: *World, key: xkb.Keysym) void {
+        // Require pointer to be locked before processing waycraft commands
+        // This prevents parent compositor from stealing command input
+        const backend = &@import("main.zig").backend;
+        const pointer_locked = backend.locked_pointer != null;
+
         // Snap to grid - press G to align active window to nearest block
-        if ((key == xkb.Keysym.g or key == xkb.Keysym.G) and !world.is_entering_cmd) {
+        if ((key == xkb.Keysym.g or key == xkb.Keysym.G) and !world.is_entering_cmd and pointer_locked) {
             if (world.active_toplevel) |active_toplevel| {
                 // Find the ToplevelRenderable for this window
                 for (world.toplevel_renderables.items) |tr| {
@@ -451,16 +469,23 @@ pub const World = struct {
             }
         }
 
-        if (key == xkb.Keysym.slash) {
+        if (key == xkb.Keysym.slash and pointer_locked) {
             world.is_entering_cmd = true;
         }
-        if (world.is_entering_cmd) {
+        if (world.is_entering_cmd and pointer_locked) {
             if (key == xkb.Keysym.BackSpace) {
                 if (world.cmd_chars.items.len == 1)
                     world.is_entering_cmd = false;
                 _ = world.cmd_chars.pop();
             } else if (key == xkb.Keysym.Return) {
-                const input = world.cmd_chars.items[1..];
+                var input = world.cmd_chars.items[1..];
+
+                // Support /drs shorthand for dbus-run-session --
+                var expanded_cmd_buf: [512]u8 = undefined;
+                if (std.mem.startsWith(u8, input, "drs ")) {
+                    const expanded = std.fmt.bufPrint(&expanded_cmd_buf, "dbus-run-session -- {s}", .{input[4..]}) catch input;
+                    input = expanded;
+                }
 
                 if (std.mem.eql(u8, input, "exit")) {
                     world.exit_requested = true;
@@ -485,6 +510,12 @@ pub const World = struct {
                 var proc = std.process.Child.init(&.{ "sh", "-c", parsed.cmd }, alloc);
                 proc.spawn() catch |err| {
                     std.log.err("Error spawning child process: {s}", .{@errorName(err)});
+
+                    // Show error notification
+                    var err_msg_buf: [256]u8 = undefined;
+                    const err_msg = std.fmt.bufPrint(&err_msg_buf, "Failed to launch: {s}", .{@errorName(err)}) catch "Failed to launch app";
+                    world.addNotification(err_msg);
+
                     world.next_window_spec = null; // Clear spec on failure
                     return;
                 };
@@ -492,6 +523,12 @@ pub const World = struct {
                     std.log.err("OOM", .{});
                     return;
                 };
+
+                // Show success notification
+                var success_msg_buf: [256]u8 = undefined;
+                const success_msg = std.fmt.bufPrint(&success_msg_buf, "Launching {s}...", .{parsed.cmd}) catch "Launching app...";
+                world.addNotification(success_msg);
+
                 world.is_entering_cmd = false;
                 world.cmd_chars.clearRetainingCapacity();
             } else {
@@ -505,15 +542,43 @@ pub const World = struct {
         }
 
 
-        world.cam_controller.keyPressed(key);
+        if (pointer_locked) {
+            world.cam_controller.keyPressed(key);
+        }
     }
 
     pub fn keyReleased(world: *World, key: xkb.Keysym) void {
-        world.cam_controller.keyReleased(key);
+        const backend = &@import("main.zig").backend;
+        if (backend.locked_pointer != null) {
+            world.cam_controller.keyReleased(key);
+        }
     }
 
     pub fn keyReleasedAll(world: *World) void {
         world.cam_controller.keyReleasedAll();
+    }
+
+    pub fn addNotification(world: *World, message: []const u8) void {
+        const t = std.posix.clock_gettime(std.posix.CLOCK.BOOTTIME) catch {
+            std.log.err("Error getting timestamp for notification", .{});
+            return;
+        };
+        const now_ns = @as(i64, t.sec) * std.time.ns_per_s + t.nsec;
+        const now_ms: i64 = @divFloor(now_ns, std.time.ns_per_ms);
+
+        // Allocate persistent copy of message
+        const msg_copy = alloc.dupe(u8, message) catch {
+            std.log.err("Failed to allocate notification message", .{});
+            return;
+        };
+
+        world.notifications.append(alloc, .{
+            .message = msg_copy,
+            .created_at = now_ms,
+        }) catch {
+            alloc.free(msg_copy);
+            std.log.err("Failed to append notification", .{});
+        };
     }
 
     fn activeToplevelDestroyed(listener: *wls.Listener(void)) void {
@@ -625,6 +690,73 @@ pub const World = struct {
                 try world.char_geometry.put(ch, ch_geom.?);
             }
         }
+
+        // Clean up expired notifications and render active ones
+        const t = std.posix.clock_gettime(std.posix.CLOCK.BOOTTIME) catch {
+            std.log.err("Error getting timestamp", .{});
+            return;
+        };
+        const now_ns = @as(i64, t.sec) * std.time.ns_per_s + t.nsec;
+        const now_ms: i64 = @divFloor(now_ns, std.time.ns_per_ms);
+
+        // Remove expired notifications
+        var notif_idx: usize = 0;
+        while (notif_idx < world.notifications.items.len) {
+            const notif = world.notifications.items[notif_idx];
+            if (now_ms - notif.created_at > notif.duration_ms) {
+                alloc.free(notif.message);
+                _ = world.notifications.swapRemove(notif_idx);
+            } else {
+                notif_idx += 1;
+            }
+        }
+
+        // Render active notifications (top-right corner)
+        if (world.notifications.items.len > 0) {
+            try world.font_material.?.recordCommandsNoTransform(cmdbuf);
+
+            const notif_font_scale: f32 = 0.4; // Previously 0.15, now larger
+            const notif_padding: f32 = 0.05;
+            var y_offset: f32 = -0.90; // Start near top
+
+            for (world.notifications.items) |notif| {
+                // Calculate fade based on age
+                const age_ms = now_ms - notif.created_at;
+                const fade_start_ms = notif.duration_ms - 500; // Start fading 500ms before end
+                const alpha = if (age_ms > fade_start_ms)
+                    1.0 - @as(f32, @floatFromInt(age_ms - fade_start_ms)) / 500.0
+                else
+                    1.0;
+
+                if (alpha <= 0.0) continue;
+
+                // Position in top-right
+                const start_x: f32 = 0.98 - (@as(f32, @floatFromInt(notif.message.len)) * font_size_x * notif_font_scale);
+
+                var x: f32 = start_x;
+                for (notif.message) |ch| {
+                    const ch_transform = Mat4{
+                        .data = .{
+                            .{ notif_font_scale, 0, 0, 0 },
+                            .{ 0, notif_font_scale * world.cam.aspect, 0, 0 },
+                            .{ 0, 0, 1, 0 },
+                            .{ x, y_offset, 0, 1 },
+                        },
+                    };
+                    try world.font_material.?.pushTransform(cmdbuf, ch_transform, .{ 1, 1, 1, alpha });
+
+                    const geom = world.char_geometry.get(ch) orelse world.char_geometry.get('?').?;
+                    gc.dev.cmdBindVertexBuffers(cmdbuf, 0, 1, @ptrCast(&geom.vert_buf.?.buf), &.{0});
+                    gc.dev.cmdBindIndexBuffer(cmdbuf, geom.index_buf.?.buf, 0, .uint32);
+                    gc.dev.cmdDrawIndexed(cmdbuf, @intCast(geom.indices.len), 1, 0, 0, 0);
+
+                    x += font_size_x * notif_font_scale;
+                }
+
+                y_offset += notif_padding + (notif_font_scale * world.cam.aspect * 2); // Stack notifications vertically
+            }
+        }
+
         if (world.cmd_chars.items.len > 0) {
             try world.font_material.?.recordCommandsNoTransform(cmdbuf);
             
@@ -641,7 +773,7 @@ pub const World = struct {
                         .{ x, y, 0, 1 },
                     },
                 };
-                try world.font_material.?.pushTransform(cmdbuf, ch_transform);
+                try world.font_material.?.pushTransform(cmdbuf, ch_transform, .{ 1, 1, 1, 1 });
 
                 const geom = world.char_geometry.get(ch) orelse world.char_geometry.get('?').?;
                 gc.dev.cmdBindVertexBuffers(cmdbuf, 0, 1, @ptrCast(&geom.vert_buf.?.buf), &.{0});

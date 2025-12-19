@@ -24,6 +24,7 @@ const PushConstants = struct {
     };
 
     matrix: Mat4,
+    color: [4]f32,
 };
 
 const Uniforms = struct {
@@ -290,7 +291,7 @@ pub const SimpleMaterial = struct {
 
     pub fn recordCommands(m: *SimpleMaterial, cmdbuf: vk.CommandBuffer, viewproj: Mat4) !void {
         try m.recordCommandsNoTransform(cmdbuf);
-        try m.pushTransform(cmdbuf, viewproj);
+        try m.pushTransform(cmdbuf, viewproj, .{ 1, 1, 1, 1 });
     }
 
     pub fn recordCommandsNoTransform(m: *SimpleMaterial, cmdbuf: vk.CommandBuffer) !void {
@@ -304,8 +305,8 @@ pub const SimpleMaterial = struct {
         gc.dev.cmdBindDescriptorSets(cmdbuf, .graphics, m.pipeline_layout, 0, 1, @ptrCast(&descriptor_set), 0, null);
     }
 
-    pub fn pushTransform(m: *SimpleMaterial, cmdbuf: vk.CommandBuffer, matrix: Mat4) !void {
-        const push_consts = PushConstants{ .matrix = matrix };
+    pub fn pushTransform(m: *SimpleMaterial, cmdbuf: vk.CommandBuffer, matrix: Mat4, color: [4]f32) !void {
+        const push_consts = PushConstants{ .matrix = matrix, .color = color };
         m.renderer.gc.dev.cmdPushConstants(cmdbuf, m.pipeline_layout, PushConstants.range.stage_flags, PushConstants.range.offset, PushConstants.range.size, &push_consts);
     }
 

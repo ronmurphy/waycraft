@@ -119,6 +119,11 @@ pub const WlBackend = struct {
         self.xdg_toplevel.setTitle("waycraft");
         self.xdg_toplevel.setAppId("zacoons.waycraft");
 
+        // In desktop mode, request fullscreen
+        if (desktop_mode) {
+            self.xdg_toplevel.setFullscreen(null);
+        }
+
         self.frame_callback = try self.surface.frame();
         self.frame_callback.setListener(*WlBackend, frame, self);
 
@@ -311,6 +316,9 @@ fn wlPointerListener(resource: *wl.Pointer, event: wl.Pointer.Event, self: *WlBa
                         std.log.err("Error locking pointer: {s}", .{@errorName(err)});
                         return;
                     };
+
+                    // Show notification that waycraft is now active
+                    self.world.addNotification("Waycraft active! Type / for commands");
 
                     return;
                 }

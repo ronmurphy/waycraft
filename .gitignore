@@ -1,0 +1,16 @@
+# Zig artifacts
+.zig-cache/
+zig-out/
+
+# Compiled shaders
+*.spv
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS junk
+.DS_Store
+Thumbs.db

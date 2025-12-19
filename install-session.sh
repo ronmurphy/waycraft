@@ -1,34 +1,23 @@
 #!/bin/bash
-# Install waycraft as a desktop session for SDDM/GDM/LightDM
+# ⚠️  WARNING: This script is DEPRECATED and will NOT work!
+#
+# Waycraft is a NESTED compositor that requires a parent Wayland compositor.
+# It cannot run as a standalone session from the login screen.
+#
+# If you run this, waycraft will crash with "ConnectFailed" because there's
+# no parent compositor to connect to.
+#
+# Use build-and-install.sh instead, then run waycraft from within your
+# normal desktop session (LabWC, Plasma, Sway, etc.)
 
-set -e
-
-# Check if running as root
-if [ "$EUID" -ne 0 ]; then
-    echo "Please run as root (use sudo)"
-    exit 1
-fi
-
-# Build waycraft
-echo "Building waycraft..."
-zig build -Doptimize=ReleaseSafe
-
-# Install binary
-echo "Installing waycraft binary to /usr/local/bin..."
-cp zig-out/bin/waycraft /usr/local/bin/
-
-# Install desktop session file
-echo "Installing Wayland session file..."
-mkdir -p /usr/share/wayland-sessions
-cp waycraft.desktop /usr/share/wayland-sessions/
-
+echo "⚠️  ERROR: This script is deprecated!"
 echo ""
-echo "✅ Waycraft installed successfully!"
+echo "Waycraft is a NESTED compositor and cannot run as a standalone session."
+echo "It will crash with 'ConnectFailed' if you try to launch it from the login screen."
 echo ""
-echo "To use waycraft:"
-echo "1. Log out of your current session"
-echo "2. At the login screen, click the session switcher (usually bottom-left or top-right)"
-echo "3. Select 'Waycraft'"
-echo "4. Log in"
+echo "Instead:"
+echo "  1. Run: sudo ./build-and-install.sh"
+echo "  2. Log into your normal desktop (LabWC, Plasma, Sway, etc.)"
+echo "  3. Open a terminal and run: waycraft"
 echo ""
-echo "Waycraft will run as a full desktop environment in 3D!"
+exit 1
